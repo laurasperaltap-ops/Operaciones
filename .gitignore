@@ -1,0 +1,22 @@
+# Entorno
+.venv/
+__pycache__/
+*.pyc
+
+# Datos de negocio: NO se versionan (contienen direcciones de clientes)
+datos/
+*.numbers
+*.xlsx
+*.csv
+!datos/.gitkeep
+
+# Salidas y checkpoints de corrida
+salidas/
+checkpoints/
+*.ckpt.jsonl
+cache_geocoding.sqlite
+
+# Credenciales
+.env
+*credentials*.json
+*service-account*.json
