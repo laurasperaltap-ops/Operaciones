@@ -103,6 +103,17 @@ def cargar(ruta: Path, hoja: str | None = None, tabla: str | None = None) -> pd.
     raise SystemExit(f"Formato no soportado: {sufijo}")
 
 
+def contar_vacios(serie: pd.Series) -> int:
+    """Celdas vacias de una columna: nulas o con texto sin contenido util.
+
+    Se evalua como una sola mascara booleana con OR. Sumar `isna()` y la
+    comparacion textual por separado contaria dos veces cada NaN, porque
+    `str(nan)` es `'nan'`.
+    """
+    texto = serie.astype(str).str.strip().str.lower()
+    return int((serie.isna() | texto.isin(["", "nan", "none", "nat"])).sum())
+
+
 def ubicar(marco: pd.DataFrame, clave: str) -> str | None:
     """Busca una columna cuyo nombre normalizado contenga `clave`."""
     for columna in marco.columns:
@@ -142,8 +153,7 @@ def perfilar(marco: pd.DataFrame, ruta: Path) -> None:
     print()
     print("Columnas detectadas:")
     for columna in marco.columns:
-        nulos = int(marco[columna].isna().sum()) + int((marco[columna].astype(str).str.strip() == "").sum())
-        print(f"  - {columna!r:<40} nulos/vacios={nulos}")
+        print(f"  - {columna!r:<40} nulos/vacios={contar_vacios(marco[columna])}")
     print()
 
     filas_2026, origen_anio = contar_2026(marco)
@@ -151,6 +161,12 @@ def perfilar(marco: pd.DataFrame, ruta: Path) -> None:
         print("Filas 2026    : NO DETERMINADO (sin columna de anio ni de fecha parseable)")
     else:
         print(f"Filas 2026    : {filas_2026}   (deducido de {origen_anio!r})")
+        # Distribucion completa: define el orden de lotes (2026 primero).
+        anios = pd.to_numeric(marco[origen_anio], errors="coerce")
+        print("\nDistribucion por anio:")
+        for anio, cuenta in anios.value_counts(dropna=False).sort_index().items():
+            etiqueta = "sin anio" if pd.isna(anio) else str(int(anio))
+            print(f"  {etiqueta:>10}: {cuenta}")
     print()
 
     print("Nulos en columnas criticas (fase 1):")
@@ -159,8 +175,7 @@ def perfilar(marco: pd.DataFrame, ruta: Path) -> None:
         if columna is None:
             print(f"  - {clave:<10}: COLUMNA NO ENCONTRADA en la fuente")
             continue
-        serie = marco[columna]
-        vacios = int(serie.isna().sum()) + int((serie.astype(str).str.strip().isin(["", "nan", "None"])).sum())
+        vacios = contar_vacios(marco[columna])
         pct = (vacios / len(marco) * 100) if len(marco) else 0.0
         print(f"  - {clave:<10}: {vacios} nulos/vacios ({pct:.1f}%)  [columna {columna!r}]")
     print("=" * 64)
