@@ -163,6 +163,7 @@ class ClienteMaps:
         url = {
             "geocode": "https://maps.googleapis.com/maps/api/geocode/json",
             "places": "https://maps.googleapis.com/maps/api/place/textsearch/json",
+            "distancematrix": "https://maps.googleapis.com/maps/api/distancematrix/json",
         }[api]
 
         for intento in range(self.max_reintentos):
