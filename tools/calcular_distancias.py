@@ -200,10 +200,17 @@ def escribir_columnas(libro: openpyxl.Workbook, encabezados: list[str],
             hoja.cell(row=numero, column=inicio, value=medida["km"])
             hoja.cell(row=numero, column=inicio + 1,
                       value=formatear_duracion(medida["segundos"]))
+            # Un trayecto de cero puede ser real (la fuente repite el mismo texto
+            # en ambos extremos, o el servicio es 'a disposicion' sin ruta fija)
+            # o el sintoma de que dos lugares distintos colapsaron al mismo
+            # punto. No se distinguen solos, asi que se marcan para revision.
+            tipo = ("Revisar · ambos extremos resolvieron al mismo punto"
+                    if medida["km"] == 0 else medida.get("tipo", ""))
         else:
             hoja.cell(row=numero, column=inicio, value="Sin ruta")
             hoja.cell(row=numero, column=inicio + 1, value=medida.get("motivo", "Sin ruta"))
-        hoja.cell(row=numero, column=inicio + 2, value=medida.get("tipo", ""))
+            tipo = medida.get("tipo", "")
+        hoja.cell(row=numero, column=inicio + 2, value=tipo)
 
     from openpyxl.cell.cell import TYPE_STRING
     for hoja_libro in libro.worksheets:
