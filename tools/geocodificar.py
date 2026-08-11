@@ -67,6 +67,10 @@ TIPOS_PRECISOS = {
     "point_of_interest", "airport", "route", "intersection",
     "transit_station", "bus_station", "lodging", "neighborhood",
     "sublocality", "sublocality_level_1", "shopping_mall",
+    # Las plazas son punto de encuentro habitual en esta base, y algunas filas
+    # traen directamente un plus-code como direccion. Ambos son ubicaciones
+    # precisas, no contenedores administrativos.
+    "town_square", "plus_code",
 }
 
 
@@ -233,6 +237,7 @@ class Resolucion:
     place_id: str = ""
     tipos: str = ""
     motivo: str = ""
+    sin_ancla: bool = False
 
 
 def _componente(resultado: dict, *tipos: str) -> str | None:
@@ -284,10 +289,6 @@ EQUIVALENCIAS_AREA = {
     "barcelona": {"barcelona", "anzoategui", "puerto la cruz", "lecheria", "bolivar"},
 }
 
-# Un plus-code sin calle ni establecimiento delante indica que la API no hallo
-# nada con nombre y devolvio una coordenada del area.
-PATRON_PLUSCODE = re.compile(r"^[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}\b",
-                             re.IGNORECASE)
 
 
 def clasificar(resultado: dict) -> str:
@@ -421,23 +422,13 @@ def interpretar(resultado: dict, fuente: str, consulta: str,
                              f"y el texto no lo respalda")
         return resolucion
 
-    # Coordenada sin nombre: la API no encontro el lugar y devolvio un punto del
-    # area. El plus-code por si solo no alcanza como sintoma, porque Google lo
-    # antepone tambien a direcciones que si traen calle; lo que delata al caso
-    # vacio es que ademas no venga ningun componente de via o establecimiento.
-    tiene_via = any(
-        {"route", "establishment", "premise", "subpremise", "point_of_interest",
-         "airport", "natural_feature", "park"} & set(componente["types"])
-        for componente in resultado.get("address_components", [])
-    )
-    if (resolucion.precision != "nivel_ciudad"
-            and PATRON_PLUSCODE.match(resolucion.direccion_formateada.strip())
-            and not tiene_via
-            and not corroborado):
-        resolucion.estado_match = "Revisar"
-        resolucion.precision = "coordenada_sin_nombre"
-        resolucion.motivo = (f"la API devolvio solo un plus-code en {resolucion.ciudad} "
-                             f"sin calle ni establecimiento; el texto no lo respalda")
+    # No se marca el plus-code en formatted_address. Se probo como sintoma de
+    # resultado vacio y no lo es: Google omite el nombre del lugar de esa cadena
+    # incluso cuando resolvio bien. 'Estadio Monumental', 'Cocodrilos Sports
+    # Park' y 'Palacio de las Academias' resuelven correctamente y los tres
+    # aparecen como plus-code. La regla mandaba a revision decenas de filas
+    # buenas sin separar ni una mala, asi que medir eso solo agrega ruido. El
+    # place_id queda en la salida para quien quiera verificar el punto.
 
     return resolucion
 
@@ -511,6 +502,10 @@ def resolver(cliente: ClienteMaps, texto: str, ciudad: str) -> Resolucion:
             crudo = expandir_place(cliente, crudo.get("place_id", "")) or crudo
 
         resolucion = interpretar(crudo, api, consulta, texto, ciudad)
+        # Sin ciudad declarada no hay con que contrastar el resultado: ni el
+        # chequeo de conflicto ni la corroboracion tienen referencia. Se deja
+        # constancia para que esas filas se puedan aislar despues.
+        resolucion.sin_ancla = not tiene_ciudad
         if resolucion.estado_match == "Match":
             return resolucion
         # "Revisar" trae datos utiles y gana a un rechazo pelado, pero se sigue
@@ -654,6 +649,7 @@ CAMPOS_SALIDA = [
     ("ciudad", "Ciudad geocodificada"), ("direccion_formateada", "Dirección normalizada"),
     ("lat", "Latitud"), ("lng", "Longitud"), ("consulta", "Consulta usada"),
     ("place_id", "Place ID"), ("motivo", "Motivo sin match"),
+    ("sin_ancla", "Resuelto sin ancla de ciudad"),
 ]
 
 

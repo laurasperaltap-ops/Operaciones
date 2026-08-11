@@ -27,7 +27,6 @@ from geocodificar import CACHE, CacheRespuestas, ClienteMaps, LimiteExcedido  # 
 
 RAIZ = Path(__file__).resolve().parent.parent
 CHECKPOINT = RAIZ / "checkpoints" / "distancias.jsonl"
-HOJA = "Direcciones 2026"
 
 COL_ID = "ID cotización"
 COL_DISTANCIA = "Distancia (KM)"
@@ -76,11 +75,17 @@ def tipo_de_calculo(fila: dict) -> str:
     return "Punto a punto"
 
 
+def hoja_de_datos(libro: openpyxl.Workbook) -> str:
+    """La hoja con la tabla completa, cuyo nombre lleva el anio del lote."""
+    for nombre in libro.sheetnames:
+        if nombre.startswith("Direcciones "):
+            return nombre
+    raise SystemExit(f"No hay hoja 'Direcciones <anio>'. Hojas: {libro.sheetnames}")
+
+
 def leer_hoja(libro_ruta: Path) -> tuple[openpyxl.Workbook, list[str], list[dict]]:
     libro = openpyxl.load_workbook(libro_ruta)
-    if HOJA not in libro.sheetnames:
-        raise SystemExit(f"El libro no tiene la hoja {HOJA!r}. Hojas: {libro.sheetnames}")
-    hoja = libro[HOJA]
+    hoja = libro[hoja_de_datos(libro)]
     encabezados = [c.value for c in hoja[1]]
     filas = []
     for numero, fila in enumerate(hoja.iter_rows(min_row=2, values_only=True), start=2):
@@ -182,8 +187,11 @@ def procesar(cliente: ClienteMaps, pendientes: list[dict], tamano: int) -> dict[
 def escribir_columnas(libro: openpyxl.Workbook, encabezados: list[str],
                       filas: list[dict], medidas: dict[int, dict], ruta: Path) -> None:
     """Agrega las columnas al final de la hoja, sin tocar lo que ya estaba."""
-    hoja = libro[HOJA]
-    inicio = len(encabezados) + 1
+    hoja = libro[hoja_de_datos(libro)]
+    # Reusa las columnas si ya estan, para que volver a correr sobre el mismo
+    # libro actualice los valores en vez de agregar un juego duplicado.
+    inicio = (encabezados.index(COL_DISTANCIA) + 1 if COL_DISTANCIA in encabezados
+              else len(encabezados) + 1)
     for desplazamiento, titulo in enumerate((COL_DISTANCIA, COL_DURACION, COL_TIPO)):
         celda = hoja.cell(row=1, column=inicio + desplazamiento, value=titulo)
         celda.font = hoja.cell(row=1, column=1).font.copy()
@@ -258,13 +266,12 @@ def main() -> None:
     args = analizador.parse_args()
 
     libro, encabezados, filas = leer_hoja(args.libro)
-    for columna in (COL_DISTANCIA, COL_DURACION, COL_TIPO):
-        if columna in encabezados:
-            raise SystemExit(f"La hoja ya tiene la columna {columna!r}; abortando "
-                             f"para no duplicarla.")
+    ya_tiene = [c for c in (COL_DISTANCIA, COL_DURACION, COL_TIPO) if c in encabezados]
+    if ya_tiene and not args.solo_reporte:
+        print(f"[aviso] la hoja ya trae {', '.join(ya_tiene)}; se actualizan en su sitio.")
 
     elegidas = candidatas(filas)
-    print(f"Hoja {HOJA!r}: {len(filas)} filas | candidatas con ambos extremos en Match: "
+    print(f"Hoja {hoja_de_datos(libro)!r}: {len(filas)} filas | candidatas con ambos extremos en Match: "
           f"{len(elegidas)}")
 
     if args.solo_reporte:
@@ -277,7 +284,11 @@ def main() -> None:
         medidas = procesar(cliente, elegidas, args.sublote)
 
     escribir_columnas(libro, encabezados, filas, medidas, args.libro)
-    reportar(elegidas, medidas)
+    # El checkpoint es unico para todos los anios, asi que el reporte se acota a
+    # las candidatas de este libro; si no, cada corrida sumaria las anteriores.
+    del_libro = {i: m for i, m in medidas.items()
+                 if i in {f[COL_ID] for f in elegidas}}
+    reportar(elegidas, del_libro)
     print(f"\nLibro actualizado en sitio: {args.libro}")
 
 

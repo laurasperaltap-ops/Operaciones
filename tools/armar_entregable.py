@@ -26,7 +26,7 @@ REVISAR = PatternFill("solid", fgColor="FFF2CC")
 SIN_MATCH = PatternFill("solid", fgColor="FCE4E4")
 
 
-def hojas_de_trabajo(lote: pd.DataFrame, procesados: dict) -> dict[str, pd.DataFrame]:
+def hojas_de_trabajo(lote: pd.DataFrame, procesados: dict, anio: int) -> dict[str, pd.DataFrame]:
     """Divide el lote en la vista completa y las dos colas accionables."""
     completo = construir_salida(lote, procesados)
 
@@ -44,7 +44,7 @@ def hojas_de_trabajo(lote: pd.DataFrame, procesados: dict) -> dict[str, pd.DataF
     revisar = compacta[(marca_o == "Revisar") | (marca_d == "Revisar")]
     sin_match = compacta[(marca_o == "Sin match") | (marca_d == "Sin match")]
 
-    return {"Direcciones 2026": completo,
+    return {f"Direcciones {anio}": completo,
             "Requieren revisión": revisar,
             "Sin match": sin_match}
 
@@ -142,7 +142,7 @@ def main() -> None:
     salida = args.salida or Path("salidas") / f"Entregable_direcciones_{args.anio}.xlsx"
     salida.parent.mkdir(parents=True, exist_ok=True)
 
-    hojas = hojas_de_trabajo(lote, procesados)
+    hojas = hojas_de_trabajo(lote, procesados, args.anio)
     with pd.ExcelWriter(salida, engine="openpyxl") as escritor:
         tabla_resumen(procesados, len(lote)).to_excel(escritor, sheet_name="Resumen", index=False)
         for nombre, marco_hoja in hojas.items():
