@@ -83,7 +83,14 @@ def normalizar(texto: object) -> str:
 
 
 def esta_vacio(valor: object) -> bool:
-    return valor is None or pd.isna(valor) or not str(valor).strip()
+    """Vacio incluye los marcadores que usan las fuentes: '-', '--', '.', etc.
+
+    Un texto sin ninguna letra ni digito no nombra un lugar, y mandarlo al
+    geocoder solo gasta una llamada para que resuelva al pais.
+    """
+    if valor is None or pd.isna(valor):
+        return True
+    return not re.search(r"[A-Za-z0-9]", str(valor))
 
 
 # --------------------------------------------------------------------------- #
@@ -522,18 +529,18 @@ def resolver(cliente: ClienteMaps, texto: str, ciudad: str) -> Resolucion:
 
 @dataclass
 class RegistroFila:
-    id_cotizacion: int
+    id_cotizacion: object
     ciudad_declarada: str
     origen: dict = field(default_factory=dict)
     destino: dict = field(default_factory=dict)
     conflicto_ciudad: bool = False
 
 
-def cargar_procesados(ruta: Path) -> dict[int, dict]:
+def cargar_procesados(ruta: Path) -> dict:
     """IDs ya resueltos en corridas previas, para no reprocesarlos."""
     if not ruta.exists():
         return {}
-    procesados: dict[int, dict] = {}
+    procesados: dict = {}
     with ruta.open(encoding="utf-8") as archivo:
         for linea in archivo:
             linea = linea.strip()
@@ -596,7 +603,9 @@ def procesar(marco: pd.DataFrame, cliente: ClienteMaps, ruta_checkpoint: Path,
     archivo = ruta_checkpoint.open("a", encoding="utf-8")
     try:
         for contador, (_, fila) in enumerate(pendientes.iterrows(), start=1):
-            identificador = int(fila[COL_ID])
+            identificador = fila[COL_ID]
+            if isinstance(identificador, float) and identificador.is_integer():
+                identificador = int(identificador)
             ciudad = fila.get(COL_CIUDAD)
 
             origen = resolver(cliente, fila.get(COL_ORIGEN), ciudad)
@@ -659,10 +668,10 @@ def construir_salida(marco: pd.DataFrame, procesados: dict[int, dict]) -> pd.Dat
     for prefijo, lado in (("Origen", "origen"), ("Destino", "destino")):
         for campo, etiqueta in CAMPOS_SALIDA:
             salida[f"{prefijo} · {etiqueta}"] = salida[COL_ID].map(
-                lambda i: (procesados.get(int(i), {}).get(lado) or {}).get(campo)
+                lambda i: (procesados.get(i, {}).get(lado) or {}).get(campo)
             )
     salida["Conflicto ciudad declarada"] = salida[COL_ID].map(
-        lambda i: procesados.get(int(i), {}).get("conflicto_ciudad")
+        lambda i: procesados.get(i, {}).get("conflicto_ciudad")
     )
     return salida
 
@@ -717,10 +726,21 @@ def resumen(procesados: dict[int, dict], total_filas: int, cliente: ClienteMaps)
 
 
 def main() -> None:
+    # Los nombres de columna son globales porque los usan construir_salida y
+    # procesar; se reasignan aqui para admitir fuentes con otro esquema.
+    global COL_ID, COL_ORIGEN, COL_DESTINO, COL_CIUDAD
+
     analizador = argparse.ArgumentParser(description=__doc__,
                                          formatter_class=argparse.RawDescriptionHelpFormatter)
     analizador.add_argument("--fuente", type=Path, default=FUENTE_POR_DEFECTO)
-    analizador.add_argument("--anio", type=int, required=True)
+    analizador.add_argument("--anio", type=int, default=None,
+                            help="Filtra por anio; si se omite, procesa todas las filas")
+    analizador.add_argument("--etiqueta", default=None,
+                            help="Nombre del checkpoint cuando no se filtra por anio")
+    analizador.add_argument("--col-id", default=COL_ID)
+    analizador.add_argument("--col-origen", default=COL_ORIGEN)
+    analizador.add_argument("--col-destino", default=COL_DESTINO)
+    analizador.add_argument("--col-ciudad", default=COL_CIUDAD)
     analizador.add_argument("--sublote", type=int, default=None,
                             help="Procesa solo el sublote N de los pendientes")
     analizador.add_argument("--tamano-sublote", type=int, default=200)
@@ -735,11 +755,18 @@ def main() -> None:
     if not clave:
         raise SystemExit("Falta GOOGLE_MAPS_API_KEY en el entorno.")
 
-    marco = pd.read_excel(args.fuente, sheet_name=0).dropna(how="all")
-    lote = marco[pd.to_numeric(marco[COL_ANIO], errors="coerce") == args.anio].copy()
-    print(f"Lote {args.anio}: {len(lote)} filas de {len(marco)} totales")
+    COL_ID, COL_ORIGEN = args.col_id, args.col_origen
+    COL_DESTINO, COL_CIUDAD = args.col_destino, args.col_ciudad
 
-    ruta_checkpoint = DIR_CHECKPOINTS / f"{args.anio}.jsonl"
+    marco = pd.read_excel(args.fuente, sheet_name=0).dropna(how="all")
+    if args.anio is not None:
+        lote = marco[pd.to_numeric(marco[COL_ANIO], errors="coerce") == args.anio].copy()
+    else:
+        lote = marco.copy()
+    etiqueta = args.etiqueta or str(args.anio)
+    print(f"Lote {etiqueta}: {len(lote)} filas de {len(marco)} totales")
+
+    ruta_checkpoint = DIR_CHECKPOINTS / f"{etiqueta}.jsonl"
     cache = CacheRespuestas(CACHE)
     cliente = ClienteMaps(clave, cache, qps=args.qps)
 

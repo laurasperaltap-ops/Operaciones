@@ -28,7 +28,7 @@ from geocodificar import CACHE, CacheRespuestas, ClienteMaps, LimiteExcedido  # 
 RAIZ = Path(__file__).resolve().parent.parent
 CHECKPOINT = RAIZ / "checkpoints" / "distancias.jsonl"
 
-COL_ID = "ID cotización"
+COL_ID = "ID cotización"  # se puede sobreescribir con --col-id
 COL_DISTANCIA = "Distancia (KM)"
 COL_DURACION = "Duración estimada (HH:MM)"
 COL_TIPO = "Distancia · Tipo de cálculo"
@@ -208,12 +208,18 @@ def escribir_columnas(libro: openpyxl.Workbook, encabezados: list[str],
             hoja.cell(row=numero, column=inicio, value=medida["km"])
             hoja.cell(row=numero, column=inicio + 1,
                       value=formatear_duracion(medida["segundos"]))
-            # Un trayecto de cero puede ser real (la fuente repite el mismo texto
-            # en ambos extremos, o el servicio es 'a disposicion' sin ruta fija)
-            # o el sintoma de que dos lugares distintos colapsaron al mismo
-            # punto. No se distinguen solos, asi que se marcan para revision.
-            tipo = ("Revisar · ambos extremos resolvieron al mismo punto"
-                    if medida["km"] == 0 else medida.get("tipo", ""))
+            # Un trayecto de cero tiene dos causas que si se distinguen: que la
+            # fuente traiga el mismo texto en ambos extremos —lo normal en un
+            # servicio a disposicion, donde la unidad no hace recorrido— o que
+            # dos lugares distintos hayan colapsado al mismo punto, que si es un
+            # error. La consulta enviada delata cual de los dos es.
+            if medida["km"] == 0:
+                misma = (str(fila.get("Origen · Consulta usada", "")).strip().lower()
+                         == str(fila.get("Destino · Consulta usada", "")).strip().lower())
+                tipo = ("Sin trayecto · mismo punto de inicio y fin" if misma
+                        else "Revisar · dos lugares distintos resolvieron al mismo punto")
+            else:
+                tipo = medida.get("tipo", "")
         else:
             hoja.cell(row=numero, column=inicio, value="Sin ruta")
             hoja.cell(row=numero, column=inicio + 1, value=medida.get("motivo", "Sin ruta"))
@@ -256,14 +262,19 @@ def reportar(candidatas_filas: list[dict], medidas: dict[int, dict]) -> None:
 
 
 def main() -> None:
+    global COL_ID
     analizador = argparse.ArgumentParser(description=__doc__)
     analizador.add_argument("--libro", type=Path, required=True)
+    analizador.add_argument("--col-id", default=COL_ID,
+                            help="Columna clave del libro (distinta segun la fuente)")
     analizador.add_argument("--sublote", type=int, default=125,
                             help="Filas entre grabaciones de checkpoint")
     analizador.add_argument("--qps", type=float, default=15.0)
     analizador.add_argument("--solo-reporte", action="store_true",
                             help="No llama a la API: reporta el checkpoint existente")
     args = analizador.parse_args()
+
+    COL_ID = args.col_id
 
     libro, encabezados, filas = leer_hoja(args.libro)
     ya_tiene = [c for c in (COL_DISTANCIA, COL_DURACION, COL_TIPO) if c in encabezados]

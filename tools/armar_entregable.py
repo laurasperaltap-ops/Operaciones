@@ -17,21 +17,22 @@ import pandas as pd
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from geocodificar import (COL_ANIO, COL_CIUDAD, COL_DESTINO, COL_ID, COL_ORIGEN,
-                          DIR_CHECKPOINTS, FUENTE_POR_DEFECTO, cargar_procesados,
-                          construir_salida)
+import geocodificar
+from geocodificar import (COL_ANIO, DIR_CHECKPOINTS, FUENTE_POR_DEFECTO,
+                          cargar_procesados, construir_salida)
 
 ENCABEZADO = PatternFill("solid", fgColor="1F3864")
 REVISAR = PatternFill("solid", fgColor="FFF2CC")
 SIN_MATCH = PatternFill("solid", fgColor="FCE4E4")
 
 
-def hojas_de_trabajo(lote: pd.DataFrame, procesados: dict, anio: int) -> dict[str, pd.DataFrame]:
+def hojas_de_trabajo(lote: pd.DataFrame, procesados: dict, etiqueta: str) -> dict[str, pd.DataFrame]:
     """Divide el lote en la vista completa y las dos colas accionables."""
     completo = construir_salida(lote, procesados)
 
     # Vista compacta: lo minimo para decidir sobre una fila sin abrir el resto.
-    columnas = [COL_ID, COL_CIUDAD, COL_ORIGEN, COL_DESTINO]
+    columnas = [geocodificar.COL_ID, geocodificar.COL_CIUDAD,
+                geocodificar.COL_ORIGEN, geocodificar.COL_DESTINO]
     for prefijo in ("Origen", "Destino"):
         columnas += [f"{prefijo} · Estado match", f"{prefijo} · Precisión",
                      f"{prefijo} · Estado", f"{prefijo} · Municipio",
@@ -44,7 +45,7 @@ def hojas_de_trabajo(lote: pd.DataFrame, procesados: dict, anio: int) -> dict[st
     revisar = compacta[(marca_o == "Revisar") | (marca_d == "Revisar")]
     sin_match = compacta[(marca_o == "Sin match") | (marca_d == "Sin match")]
 
-    return {f"Direcciones {anio}": completo,
+    return {f"Direcciones {etiqueta}": completo,
             "Requieren revisión": revisar,
             "Sin match": sin_match}
 
@@ -128,21 +129,34 @@ def dar_formato(ruta: Path) -> None:
 
 def main() -> None:
     analizador = argparse.ArgumentParser(description=__doc__)
-    analizador.add_argument("--anio", type=int, default=2026)
+    analizador.add_argument("--anio", type=int, default=None)
+    analizador.add_argument("--etiqueta", default=None)
     analizador.add_argument("--fuente", type=Path, default=FUENTE_POR_DEFECTO)
     analizador.add_argument("--salida", type=Path, default=None)
+    analizador.add_argument("--col-id", default=geocodificar.COL_ID)
+    analizador.add_argument("--col-origen", default=geocodificar.COL_ORIGEN)
+    analizador.add_argument("--col-destino", default=geocodificar.COL_DESTINO)
+    analizador.add_argument("--col-ciudad", default=geocodificar.COL_CIUDAD)
     args = analizador.parse_args()
 
-    marco = pd.read_excel(args.fuente, sheet_name=0).dropna(how="all")
-    lote = marco[pd.to_numeric(marco[COL_ANIO], errors="coerce") == args.anio].copy()
-    procesados = cargar_procesados(DIR_CHECKPOINTS / f"{args.anio}.jsonl")
-    if not procesados:
-        raise SystemExit(f"No hay checkpoint para {args.anio}.")
+    # construir_salida lee los nombres de columna del modulo, no de aqui.
+    geocodificar.COL_ID, geocodificar.COL_ORIGEN = args.col_id, args.col_origen
+    geocodificar.COL_DESTINO, geocodificar.COL_CIUDAD = args.col_destino, args.col_ciudad
 
-    salida = args.salida or Path("salidas") / f"Entregable_direcciones_{args.anio}.xlsx"
+    etiqueta = args.etiqueta or str(args.anio)
+    marco = pd.read_excel(args.fuente, sheet_name=0).dropna(how="all")
+    if args.anio is not None:
+        lote = marco[pd.to_numeric(marco[COL_ANIO], errors="coerce") == args.anio].copy()
+    else:
+        lote = marco.copy()
+    procesados = cargar_procesados(DIR_CHECKPOINTS / f"{etiqueta}.jsonl")
+    if not procesados:
+        raise SystemExit(f"No hay checkpoint para {etiqueta}.")
+
+    salida = args.salida or Path("salidas") / f"Entregable_direcciones_{etiqueta}.xlsx"
     salida.parent.mkdir(parents=True, exist_ok=True)
 
-    hojas = hojas_de_trabajo(lote, procesados, args.anio)
+    hojas = hojas_de_trabajo(lote, procesados, etiqueta)
     with pd.ExcelWriter(salida, engine="openpyxl") as escritor:
         tabla_resumen(procesados, len(lote)).to_excel(escritor, sheet_name="Resumen", index=False)
         for nombre, marco_hoja in hojas.items():
